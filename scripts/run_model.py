@@ -65,7 +65,7 @@ PR_DS_PRE = xr.open_dataset(rf"{REPO}/data/data_in/Pre_Event_San_Juan.tif")
 BUILDING_GDF = gpd.read_file(
     rf"{REPO}/data/data_in/Buildins Footprint ROI/building_footprint_roi_challenge.shp"
 )
-BUILDING_GDF.to_crs(epsg=32619, inplace=True)
+BUILDING_GDF = BUILDING_GDF.to_crs(epsg=32619)
 
 PR_DS_POST_POLYGON = utils.get_dataset_extent(PR_DS_POST)
 PR_DS_PRE_POLYGON = utils.get_dataset_extent(PR_DS_PRE)
