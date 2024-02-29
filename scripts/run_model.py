@@ -1,42 +1,33 @@
 ##############      Configuración      ##############
 import os
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
-from typing import List, Dict
-from dotenv import dotenv_values
 
-pd.set_option("display.max_columns", None)
-envpath = "/mnt/d/Maestría/Tesis/Repo/scripts/globals.env"
-if os.path.isfile(envpath):
-    env = dotenv_values(envpath)
-else:
-    env = dotenv_values(r"D:/Maestría/Tesis/Repo/scripts/globals_win.env")
+REPO = r"/mnt/d/Becas y Proyectos/EY Challenge 2024/EY24"
+assert os.path.isdir(
+    REPO
+), "No existe el repositorio. Revisar la variable REPO del codigo run_model"
 
-path_proyecto = env["PATH_PROYECTO"]
-path_datain = env["PATH_DATAIN"]
-path_dataout = env["PATH_DATAOUT"]
-path_scripts = env["PATH_SCRIPTS"]
-path_satelites = env["PATH_SATELITES"]
-path_logs = env["PATH_LOGS"]
-path_outputs = env["PATH_OUTPUTS"]
-path_imgs = env["PATH_IMGS"]
-# path_programas  = globales[7]
+PATH_DATAIN = rf"{REPO}/data/data_in"
+PATH_DATAOUT = rf"{REPO}/data/data_out"
+PATH_SCRIPTS = rf"{REPO}/scripts"
+PATH_LOGS = rf"{REPO}/logs"
+PATH_OUTPUTS = rf"{REPO}/outputs"
+
+for folder in [PATH_DATAIN, PATH_DATAOUT, PATH_SCRIPTS, PATH_LOGS, PATH_OUTPUTS]:
+    os.makedirs(folder, exist_ok=True)
+
 ###############################################
 
-import true_metrics
 import custom_models
-import build_dataset
-import grid_predictions
 import utils
 
 import os
 import sys
 import scipy
 import random
+import numpy as np
 import pandas as pd
 import xarray as xr
+import geopandas as gpd
 from typing import Iterator, List, Union, Tuple, Any
 from datetime import datetime
 from sklearn.model_selection import train_test_split
@@ -58,6 +49,8 @@ from tensorflow.keras.models import Sequential
 import cv2
 import skimage
 
+pd.set_option("display.max_columns", None)
+
 # the next 3 lines of code are for my machine and setup due to https://github.com/tensorflow/tensorflow/issues/43174
 try:
     physical_devices = tf.config.list_physical_devices("GPU")
@@ -66,23 +59,17 @@ except:
     print("No GPU set. Is the GPU already initialized?")
 
 
-REPO = r"D:\Becas y Proyectos\EY Challenge 2024\EY24"
-assert os.path.isdir(REPO), "No existe el repositorio. Revisar la variable REPO del codigo run_model"
-
-PR_DS_POST = xr.open_dataset(
-    rf"{REPO}\data\data_in\Post_Event_San_Juan.tif"
-)
-PR_DS_PRE = xr.open_dataset(
-    rf"{REPO}\data\data_in\Pre_Event_San_Juan.tif"
-)
+PR_DS_POST = xr.open_dataset(rf"{REPO}/data/data_in/Post_Event_San_Juan.tif")
+PR_DS_PRE = xr.open_dataset(rf"{REPO}/data/data_in/Pre_Event_San_Juan.tif")
 
 BUILDING_GDF = gpd.read_file(
-    rf"{REPO}\data\data_in\Buildins Footprint ROI\building_footprint_roi_challenge.shp"
+    rf"{REPO}/data/data_in/Buildins Footprint ROI/building_footprint_roi_challenge.shp"
 )
 BUILDING_GDF.to_crs(epsg=32619, inplace=True)
 
 PR_DS_POST_POLYGON = utils.get_dataset_extent(PR_DS_POST)
 PR_DS_PRE_POLYGON = utils.get_dataset_extent(PR_DS_PRE)
+
 
 def generate_savename(model_name, image_size, sample_size, extra):
 
@@ -123,7 +110,7 @@ def create_datasets(
 
         # FIXME: armar estas funciones
         im_classes, bboxs = utils.get_image_classes_and_boxes(BUILDING_GDF, boundaries)
-        
+
         # FIXME: verificar si esto hace falta o no
         # Reduce quality and process image
         image = utils.process_image(image, resizing_size=image_size)
@@ -193,28 +180,28 @@ def create_datasets(
         i = 0
         for x in train_dataset.take(5):
             np.save(
-                f"{path_outputs}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
             )
             np.save(
-                f"{path_outputs}/{savename}_train_example_{i}_classes",
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
                 tfds.as_numpy(x)[1],
             )
             np.save(
-                f"{path_outputs}/{savename}_train_example_{i}_bbox", tfds.as_numpy(x)[2]
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox", tfds.as_numpy(x)[2]
             )
             i += 1
 
         i = 0
         for x in val_dataset.take(5):
             np.save(
-                f"{path_outputs}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
             )
             np.save(
-                f"{path_outputs}/{savename}_val_example_{i}_classes",
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
                 tfds.as_numpy(x)[1],
             )
             np.save(
-                f"{path_outputs}/{savename}_val_example_{i}_bbox", tfds.as_numpy(x)[2]
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox", tfds.as_numpy(x)[2]
             )
 
             i += 1
@@ -250,9 +237,9 @@ def get_callbacks(
         def on_epoch_end(self, epoch, logs=None):
             # Save model
             if epoch % 10 == 0:
-                os.makedirs(f"{path_dataout}/models_by_epoch/{savename}", exist_ok=True)
+                os.makedirs(f"{PATH_DATAOUT}/models_by_epoch/{savename}", exist_ok=True)
                 self.model.save(
-                    f"{path_dataout}/models_by_epoch/{savename}/{savename}_{epoch}",
+                    f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{epoch}",
                     include_optimizer=True,
                 )
 
@@ -277,7 +264,7 @@ def get_callbacks(
     #     monitor="val_loss", factor=0.2, patience=10, min_lr=0.0000001
     # )
     model_checkpoint_callback = ModelCheckpoint(
-        f"{path_dataout}/models/{savename}",
+        f"{PATH_DATAOUT}/models/{savename}",
         monitor="val_loss",
         verbose=1,
         save_best_only=True,  # save the best model
@@ -285,7 +272,7 @@ def get_callbacks(
         save_freq="epoch",  # save every epoch
     )
     csv_logger = CSVLogger(
-        f"{path_dataout}/models_by_epoch/{savename}/{savename}_history.csv", append=True
+        f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_history.csv", append=True
     )
 
     return [
@@ -335,12 +322,12 @@ def run_model(
 
     def get_last_trained_epoch(savename):
         try:
-            files = os.listdir(f"{path_dataout}/models_by_epoch/{savename}")
+            files = os.listdir(f"{PATH_DATAOUT}/models_by_epoch/{savename}")
             epochs = [file.split("_")[-1] for file in files]
             epochs = [int(epoch) for epoch in epochs if epoch.isdigit()]
             initial_epoch = max(epochs)
         except:
-            os.makedirs(f"{path_dataout}/models_by_epoch/{savename}")
+            os.makedirs(f"{PATH_DATAOUT}/models_by_epoch/{savename}")
             print("Model not found, running from begining")
             initial_epoch = None
 
@@ -364,13 +351,13 @@ def run_model(
         print("Restoring model...")
         try:
             model_path = (
-                f"{path_dataout}/models_by_epoch/{savename}/{savename}_{initial_epoch}"
+                f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{initial_epoch}"
             )
             model = keras.models.load_model(model_path)  # load the model from file
         except:
             initial_epoch -= 1
             model_path = (
-                f"{path_dataout}/models_by_epoch/{savename}/{savename}_{initial_epoch}"
+                f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{initial_epoch}"
             )
             model = keras.models.load_model(model_path)  # load the model from file
         initial_epoch = initial_epoch + 1
@@ -432,7 +419,7 @@ def run(
     """
 
     savename = generate_savename(model_name, image_size, train_size, extra)
-    log_dir = f"{path_logs}/{savename}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    log_dir = f"{PATH_LOGS}/{savename}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     ## Set Model & loss function
     model, loss, metrics = set_model_and_loss_function(
