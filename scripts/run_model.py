@@ -62,10 +62,7 @@ except:
 PR_DS_POST = xr.open_dataset(rf"{REPO}/data/data_in/Post_Event_San_Juan.tif")
 PR_DS_PRE = xr.open_dataset(rf"{REPO}/data/data_in/Pre_Event_San_Juan.tif")
 
-BUILDING_GDF = gpd.read_file(
-    rf"{REPO}/data/data_in/Buildins Footprint ROI/building_footprint_roi_challenge.shp"
-)
-BUILDING_GDF = BUILDING_GDF.to_crs(epsg=32619)
+BUILDING_GDF = gpd.read_parquet(rf"{REPO}/data/data_out/BUILDING_GDF.parquet")
 
 PR_DS_POST_POLYGON = utils.get_dataset_extent(PR_DS_POST)
 PR_DS_PRE_POLYGON = utils.get_dataset_extent(PR_DS_PRE)
@@ -92,11 +89,11 @@ def create_datasets(
         #   example: <tf.Tensor: shape=(), dtype=uint8, numpy=20> -> 20
 
         # initialize iterators & params
-        iteration = 0
+        bboxs = np.zeros(shape=(0, 4))
         image = np.zeros(shape=(3, 0, 0))
         img_correct_shape = (3, image_size, image_size)
 
-        while image.shape != img_correct_shape:
+        while (image.shape != img_correct_shape) or (bboxs.shape[0] == 0):
             # Iterate until the image has the correct shape (when selecting borders)
 
             # Generate the image
@@ -108,21 +105,36 @@ def create_datasets(
                 stacked_images=[1],
             )
 
-        # FIXME: armar estas funciones
-        im_classes, bboxs = utils.get_image_classes_and_boxes(BUILDING_GDF, boundaries)
+            if boundaries is not None:
+                # FIXME: armar estas funciones
+                im_classes, bboxs = utils.get_image_classes_and_boxes(
+                    BUILDING_GDF, boundaries
+                )
 
-        # FIXME: verificar si esto hace falta o no
         # Reduce quality and process image
         image = utils.process_image(image, resizing_size=image_size)
 
         # Augment dataset
-        if type == "train":
-            # FIXME: revisar como aumentar
-            image = utils.augment_image(image)
-            # image = image
-
+        # FIXME: revisar como aumentar
+        # image = utils.augment_image(image)
+        print(bboxs)
         # np.save(fr"/mnt/d/Maestría/Tesis/Repo/data/data_out/test_arrays/img_{i}_{df_subset.iloc[i].link}.npy", image)
         return image, im_classes, bboxs
+
+    # Pack the dataset into a dictionary with desired types
+    def pack_features_vector(image, label, bbox):
+        image.set_shape((image_size, image_size, 3))
+
+        if bbox is None:
+            print("None bbox")
+        # Convert to ragged tensor
+        bbox_ragged = tf.RaggedTensor.from_tensor(bbox)
+        label_ragged = tf.RaggedTensor.from_tensor(label)
+
+        if bbox_ragged is None:
+            print("None bbox_ragged")
+
+        return image, {"boxes": bbox_ragged, "classes": label_ragged}
 
     ### Generate Datasets
     # Split the data
@@ -138,12 +150,6 @@ def create_datasets(
         tf.uint32,
     )  # Creates a dataset with only the indexes (0, 1, 2, 3, etc.)
 
-    train_dataset = train_dataset.shuffle(
-        buffer_size=int(train_size),
-        seed=825,
-        reshuffle_each_iteration=True,
-    )
-
     train_dataset = train_dataset.map(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
@@ -151,8 +157,11 @@ def create_datasets(
             Tout=[tf.uint8, tf.uint16, tf.float32],  # image, classes, bbox
         ),
     )
+    train_dataset = train_dataset.map(pack_features_vector)
 
-    train_dataset = train_dataset.batch(64).prefetch(tf.data.AUTOTUNE)
+    train_dataset = train_dataset.batch(8, drop_remainder=True).prefetch(
+        tf.data.AUTOTUNE
+    )
 
     ## VAL ##
     # Generator for the index
@@ -160,11 +169,7 @@ def create_datasets(
         lambda: list(range(val_size)),  # The index generator,
         tf.uint32,
     )  # Creates a dataset with only the indexes (0, 1, 2, 3, etc.)
-    val_dataset = val_dataset.shuffle(
-        buffer_size=int(val_size),
-        seed=825,
-        reshuffle_each_iteration=True,
-    )
+
     val_dataset = val_dataset.map(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
@@ -172,36 +177,42 @@ def create_datasets(
             Tout=[tf.uint8, tf.uint16, tf.float32],  # image, classes, bbox
         ),
     )
-    val_dataset = val_dataset.batch(128)
+    val_dataset = val_dataset.map(pack_features_vector)
+
+    val_dataset = val_dataset.batch(64, drop_remainder=True)
 
     if save_examples == True:
         print("saving train/test examples")
 
         i = 0
-        for x in train_dataset.take(5):
+        for x in train_dataset.take(2):
+            print(f"batch {i}")
             np.save(
                 f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
             )
             np.save(
                 f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
-                tfds.as_numpy(x)[1],
+                tfds.as_numpy(x)[1]["classes"],
             )
             np.save(
-                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox", tfds.as_numpy(x)[2]
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
+                tfds.as_numpy(x)[1]["boxes"],
             )
             i += 1
 
         i = 0
-        for x in val_dataset.take(5):
+        for x in val_dataset.take(2):
+            print(f"batch {i}")
             np.save(
                 f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
             )
             np.save(
                 f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
-                tfds.as_numpy(x)[1],
+                tfds.as_numpy(x)[1]["classes"],
             )
             np.save(
-                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox", tfds.as_numpy(x)[2]
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
+                tfds.as_numpy(x)[1]["boxes"],
             )
 
             i += 1
@@ -340,8 +351,13 @@ def run_model(
         model = model_function
         model.summary()
 
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate=0.001,
+            global_clipnorm=None,
+        )
+
         model.compile(
-            optimizer="nadam",
+            optimizer=optimizer,
             classification_loss="binary_crossentropy",
             box_loss="ciou",
         )
@@ -424,9 +440,7 @@ def run(
     ## Set Model & loss function
     model, loss, metrics = set_model_and_loss_function(
         model_name=model_name,
-        bands=3,
-        resizing_size=image_size,
-        weights=weights,
+        n_classes=2,
     )
 
     ## Transform dataframes into datagenerators:
@@ -436,7 +450,7 @@ def run(
         image_size,
         train_size=train_size,
         savename=savename,
-        save_examples=True,
+        save_examples=False,
     )
 
     # Get tensorboard callbacks and set the custom test loss computation
@@ -472,6 +486,7 @@ if __name__ == "__main__":
 
     # Train the Model
     run(
+        model_name=model,
         weights=weights,
         image_size=image_size,
         train_size=train_size,

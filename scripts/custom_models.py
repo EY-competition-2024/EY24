@@ -42,18 +42,25 @@ def rebuild_top(model_base, kind="cla") -> Sequential:
 def YOLOv8(n_classes=2) -> Sequential:
     """https://keras.io/api/applications/mobilenet_v3/#mobilenetv3small-function"""
 
-    backbone = keras_cv.models.YOLOV8Backbone.from_preset(
-        "yolo_v8_s_backbone_coco"  # We will use yolov8 small backbone with coco weights
+    # backbone = keras_cv.models.YOLOV8Backbone.from_preset(
+    #     "yolo_v8_s_backbone_coco"  # We will use yolov8 small backbone with coco weights
+    # )
+
+    # yolo = keras_cv.models.YOLOV8Detector(
+    #     num_classes=n_classes,
+    #     bounding_box_format="xyxy",
+    #     backbone=backbone,
+    #     fpn_depth=1,
+    # )
+
+    model = keras_cv.models.YOLOV8Detector(
+        num_classes=20,
+        bounding_box_format="xywh",
+        backbone=keras_cv.models.YOLOV8Backbone.from_preset("yolo_v8_m_backbone_coco"),
+        fpn_depth=2,
     )
 
-    yolo = keras_cv.models.YOLOV8Detector(
-        num_classes=n_classes,
-        bounding_box_format="xyxy",
-        backbone=backbone,
-        fpn_depth=1,
-    )
-
-    return yolo
+    return model
 
 
 def small_cnn(resizing_size=200) -> Sequential:
