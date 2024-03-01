@@ -53,7 +53,7 @@ def get_image_classes_and_boxes(gdf, boundaries):
 
     # FIXME: cambiar esto por la columna de BUILDING_GDF con la clase correspondiente
     # classes = image_buildings.classes.to_numpy()
-    classes = np.random.randint(0, 2, size=[len(bboxs), 1])
+    classes = np.random.randint(0, 2, size=len(bboxs))
 
     return classes, bboxs
 

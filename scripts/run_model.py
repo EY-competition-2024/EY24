@@ -93,8 +93,8 @@ def create_datasets(
         image = np.zeros(shape=(3, 0, 0))
         img_correct_shape = (3, image_size, image_size)
 
+        # Iterate until the image has the correct shape (when selecting borders)
         while (image.shape != img_correct_shape) or (bboxs.shape[0] == 0):
-            # Iterate until the image has the correct shape (when selecting borders)
 
             # Generate the image
             image, boundaries = utils.stacked_image_from_census_tract(
@@ -117,24 +117,13 @@ def create_datasets(
         # Augment dataset
         # FIXME: revisar como aumentar
         # image = utils.augment_image(image)
-        print(bboxs)
         # np.save(fr"/mnt/d/Maestría/Tesis/Repo/data/data_out/test_arrays/img_{i}_{df_subset.iloc[i].link}.npy", image)
         return image, im_classes, bboxs
 
     # Pack the dataset into a dictionary with desired types
     def pack_features_vector(image, label, bbox):
-        image.set_shape((image_size, image_size, 3))
 
-        if bbox is None:
-            print("None bbox")
-        # Convert to ragged tensor
-        bbox_ragged = tf.RaggedTensor.from_tensor(bbox)
-        label_ragged = tf.RaggedTensor.from_tensor(label)
-
-        if bbox_ragged is None:
-            print("None bbox_ragged")
-
-        return image, {"boxes": bbox_ragged, "classes": label_ragged}
+        return image, {"boxes": bbox, "classes": label}
 
     ### Generate Datasets
     # Split the data
@@ -157,9 +146,16 @@ def create_datasets(
             Tout=[tf.uint8, tf.uint16, tf.float32],  # image, classes, bbox
         ),
     )
-    train_dataset = train_dataset.map(pack_features_vector)
+    train_dataset = train_dataset.map(
+        lambda image, classes, bbox: (
+            tf.ensure_shape(image, (image_size, image_size, 3)),
+            tf.ensure_shape(classes, [None]),  # Modify the shape according to your data
+            tf.ensure_shape(bbox, [None, 4]),  # Modify the shape according to your data
+        )
+    )
 
-    train_dataset = train_dataset.batch(8, drop_remainder=True).prefetch(
+    train_dataset = train_dataset.map(pack_features_vector)
+    train_dataset = train_dataset.ragged_batch(8, drop_remainder=True).prefetch(
         tf.data.AUTOTUNE
     )
 
@@ -179,7 +175,7 @@ def create_datasets(
     )
     val_dataset = val_dataset.map(pack_features_vector)
 
-    val_dataset = val_dataset.batch(64, drop_remainder=True)
+    val_dataset = val_dataset.ragged_batch(64, drop_remainder=True)
 
     if save_examples == True:
         print("saving train/test examples")
@@ -338,7 +334,7 @@ def run_model(
             epochs = [int(epoch) for epoch in epochs if epoch.isdigit()]
             initial_epoch = max(epochs)
         except:
-            os.makedirs(f"{PATH_DATAOUT}/models_by_epoch/{savename}")
+            os.makedirs(f"{PATH_DATAOUT}/models_by_epoch/{savename}", exist_ok=True)
             print("Model not found, running from begining")
             initial_epoch = None
 
@@ -478,7 +474,7 @@ def run(
 
 if __name__ == "__main__":
 
-    image_size = 640  # YOLO Default
+    image_size = 512  # YOLO Default
     train_size = 10_000
     model = "YOLOv8"
     extra = ""
