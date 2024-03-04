@@ -65,7 +65,7 @@ PR_DS_POST = xr.open_dataset(rf"{REPO}/data/data_in/Post_Event_San_Juan.tif")
 PR_DS_PRE = xr.open_dataset(rf"{REPO}/data/data_in/Pre_Event_San_Juan.tif")
 
 BUILDING_GDF = gpd.read_parquet(
-    rf"{REPO}/data/data_out/building_footprint_roi_challenge_label_reproj.parquet"
+    rf"{REPO}/data/data_out/building_footprint_cropped.parquet"
 )
 
 PR_DS_POST_POLYGON = utils.get_dataset_extent(PR_DS_POST)
@@ -129,6 +129,15 @@ def create_datasets(
             all_conditions_met = all(
                 [img_has_correct_shape, img_has_buildings, img_has_damaged_buildings]
             )
+            if all_conditions_met is False:
+
+                print("Image not valid, retrying...")
+                if img_has_correct_shape is False:
+                    print("Shape not correct")
+                if img_has_buildings is False:
+                    print("Buildings not found")
+                if img_has_damaged_buildings is False:
+                    print("Damaged not found")
 
         # Reduce quality and process image
         image = utils.process_image(image, resizing_size=image_size)
@@ -136,7 +145,7 @@ def create_datasets(
         # Augment dataset
         # FIXME: revisar como aumentar
         # image = utils.augment_image(image)
-        # np.save(fr"/mnt/d/Maestría/Tesis/Repo/data/data_out/test_arrays/img_{i}_{df_subset.iloc[i].link}.npy", image)
+
         return image, im_classes, bboxs
 
     # Pack the dataset into a dictionary with desired types
@@ -146,7 +155,7 @@ def create_datasets(
 
     ### Generate Datasets
     # Split the data
-    val_size = int(train_size)  # * 0.1)
+    val_size = int(train_size * 0.1)
     print()
     print(f"Train size: {train_size} images")
     print(f"Validation size: {val_size} images")
@@ -162,7 +171,7 @@ def create_datasets(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
             inp=[i],
-            Tout=[tf.uint8, tf.uint16, tf.float64],  # image, classes, bbox
+            Tout=[tf.uint8, tf.uint8, tf.float64],  # image, classes, bbox
         ),
     )
     train_dataset = train_dataset.map(
@@ -205,41 +214,39 @@ def create_datasets(
 
     if save_examples == True:
         print("saving train/test examples")
+
         visualize_dataset(f"{savename}_train_", train_dataset, (0, 255), 2, 2)
-
         visualize_dataset(f"{savename}_val_", val_dataset, (0, 255), 2, 2)
-        # i = 0
-        # for x in train_dataset.take(2):
-        #     print(f"batch {i}")
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
-        #     )
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
-        #         tfds.as_numpy(x)[1]["classes"],
-        #     )
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
-        #         tfds.as_numpy(x)[1]["boxes"],
-        #     )
-        #     i += 1
+        i = 0
+        for x in train_dataset.take(1):
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
+            )
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
+                tfds.as_numpy(x)[1]["classes"],
+            )
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
+                tfds.as_numpy(x)[1]["boxes"],
+            )
+            i += 1
 
-        # i = 0
-        # for x in val_dataset.take(2):
-        #     print(f"batch {i}")
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
-        #     )
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
-        #         tfds.as_numpy(x)[1]["classes"],
-        #     )
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
-        #         tfds.as_numpy(x)[1]["boxes"],
-        #     )
+        i = 0
+        for x in val_dataset.take(1):
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
+            )
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
+                tfds.as_numpy(x)[1]["classes"],
+            )
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
+                tfds.as_numpy(x)[1]["boxes"],
+            )
 
-        #     i += 1
+            i += 1
 
     print()
     print("Dataset generado!")
@@ -247,26 +254,66 @@ def create_datasets(
     return train_dataset, val_dataset
 
 
+# def visualize_dataset(savename, inputs, value_range, rows, cols):
+#     import matplotlib.pyplot as plt
+#     import matplotlib.patches as patches
+
+#     inputs = next(iter(inputs.take(1)))
+
+#     images, y_true = inputs[0], inputs[1]
+
+#     visualization.plot_bounding_box_gallery(
+#         images,
+#         value_range=value_range,
+#         rows=rows,
+#         cols=cols,
+#         y_true=y_true,
+#         scale=5,
+#         font_scale=0.2,
+#         bounding_box_format="xyxy",
+#         class_mapping={0: "", 1: "damaged"},
+#     )
+#     plt.gcf().savefig(f"{PATH_OUTPUTS}/{savename}_example_imgs")
+
+
 def visualize_dataset(savename, inputs, value_range, rows, cols):
+    import earthpy.plot as ep
     import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
+    import numpy as np
 
     inputs = next(iter(inputs.take(1)))
-
     images, y_true = inputs[0], inputs[1]
-    print(y_true)
-    visualization.plot_bounding_box_gallery(
-        images,
-        value_range=value_range,
-        rows=rows,
-        cols=cols,
-        y_true=y_true,
-        scale=5,
-        font_scale=0.2,
-        bounding_box_format="xyxy",
-        class_mapping={0: "", 1: "damaged"},
-    )
-    plt.gcf().savefig(f"{PATH_OUTPUTS}/{savename}_example_imgs")
+    images = images.numpy()
+    bboxs = y_true["boxes"].numpy()
+    im_classes = y_true["classes"].numpy()
+
+    fig, ax = plt.subplots(rows, cols, figsize=(10, 10))
+    for i, ax in enumerate(ax.flatten()):
+        boxes = bboxs[i]
+        classes = im_classes[i]
+
+        for j, bbox in enumerate(boxes):
+
+            damaged = classes[j]
+            if damaged:
+                edgecolor = "r"
+            else:
+                edgecolor = "b"
+
+            box = plt.Rectangle(
+                (bbox[0], bbox[1]),
+                bbox[2] - bbox[0],
+                bbox[3] - bbox[1],
+                fill=None,
+                linewidth=2,
+                edgecolor=edgecolor,
+            )
+            ax.add_patch(box)
+
+        ax.imshow(images[i])  # Specify extent here
+        ax.set_axis_off()
+
+    fig.savefig(f"{PATH_OUTPUTS}/{savename}_example_imgs")
 
 
 def get_callbacks(
@@ -372,7 +419,7 @@ def get_callbacks(
     )
 
     return [
-        # coco_metrics_callback,  # Mean Average Precision (mAP) metric
+        coco_metrics_callback,  # Mean Average Precision (mAP) metric
         early_stopping_callback,
         # reduce_lr,
         model_checkpoint_callback,  # Save best model
@@ -498,7 +545,7 @@ def run(
     model_name: str,
     weights=None,
     image_size=512,
-    train_size=10000,
+    train_size=1000,
     n_epochs=100,
     extra="",
 ):
@@ -526,7 +573,7 @@ def run(
         image_size,
         train_size=train_size,
         savename=savename,
-        save_examples=True,
+        save_examples=False,
     )
 
     # Get tensorboard callbacks and set the custom test loss computation
@@ -556,7 +603,7 @@ def run(
 if __name__ == "__main__":
 
     image_size = 512  # YOLO Default
-    train_size = 1000
+    train_size = 10000
     model = "YOLOv8"
     extra = ""
     weights = None

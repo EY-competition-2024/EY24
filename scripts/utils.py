@@ -58,14 +58,21 @@ def get_image_classes_and_boxes(gdf, boundaries, img_size):
         / (np.array([xmax, ymax, xmax, ymax]) - np.array([xmin, ymin, xmin, ymin]))
         * img_size
     )
+
+    # Crop values lower than 0 and higher than img_size
+    bboxs = np.clip(bboxs, 0, img_size)
+
     # Correct vertical mirroring
     bboxs[:, 1] = img_size - bboxs[:, 1]
     bboxs[:, 3] = img_size - bboxs[:, 3]
 
-    # Get classes
-    classes = gdf.damaged.to_numpy()
+    # Change y position, as they are invereted
+    bboxs[:, [1, 3]] = bboxs[:, [3, 1]]
 
-    return classes, bboxs
+    # Get classes
+    image_buildings = image_buildings.damaged.to_numpy()
+
+    return image_buildings, bboxs
 
 
 def assess_image_damage(im_classes):
