@@ -43,7 +43,7 @@ def get_datasets_for_polygon(poly, extents):
     return correct_datasets
 
 
-def get_image_classes_and_boxes(gdf, boundaries):
+def get_image_classes_and_boxes(gdf, boundaries, img_size):
 
     # filter gdf based on boudnaries
     image_buildings = gdf.cx[
@@ -51,11 +51,29 @@ def get_image_classes_and_boxes(gdf, boundaries):
     ]
     bboxs = image_buildings.bounds.to_numpy()
 
+    # Normalize boxes to 0-1
+    xmin, ymin, xmax, ymax = np.array(boundaries)
+    bboxs = (
+        (bboxs - np.array([xmin, ymin, xmin, ymin]))
+        / (np.array([xmax, ymax, xmax, ymax]) - np.array([xmin, ymin, xmin, ymin]))
+        * img_size
+    )
+
     # FIXME: cambiar esto por la columna de BUILDING_GDF con la clase correspondiente
     # classes = image_buildings.classes.to_numpy()
     classes = np.random.randint(0, 2, size=len(bboxs))
 
     return classes, bboxs
+
+
+def assess_image_damage(im_classes):
+
+    has_damage = any(im_classes == 1)
+
+    if np.random.rand() > 0.9:
+        has_damage = True
+
+    return True
 
 
 def random_point_from_geometry(polygon, size=100):

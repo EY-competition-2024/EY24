@@ -46,9 +46,10 @@ from tensorflow.keras.callbacks import (
     CSVLogger,
 )
 from tensorflow.keras.models import Sequential
+
 import keras_cv
-import cv2
-import skimage
+from keras_cv import bounding_box
+from keras_cv import visualization
 
 pd.set_option("display.max_columns", None)
 
@@ -93,12 +94,15 @@ def create_datasets(
         bboxs = np.zeros(shape=(0, 4))
         image = np.zeros(shape=(3, 0, 0))
         img_correct_shape = (3, image_size, image_size)
-        # has_damage = False
 
+        all_conditions_met = False
         # Iterate until the image has the correct shape (when selecting borders)
-        while (image.shape != img_correct_shape) or (
-            bboxs.shape[0] == 0
-        ):  # or (has_damage is False):
+        while all_conditions_met is False:  # or (has_damage is False):
+
+            # Reset conditions
+            img_has_correct_shape = False
+            img_has_buildings = False
+            img_has_damaged_buildings = False
 
             # Generate the image
             image, boundaries = utils.stacked_image_from_census_tract(
@@ -108,16 +112,27 @@ def create_datasets(
                 n_bands=3,
                 stacked_images=[1],
             )
-
             if boundaries is not None:
                 # FIXME: armar estas funciones
                 im_classes, bboxs = utils.get_image_classes_and_boxes(
-                    BUILDING_GDF, boundaries
+                    BUILDING_GDF, boundaries, image_size
                 )
 
-                # # has_damage = assess_image_damage(image)
-                # if np.random.rand() > 0.9:
-                #     has_damage=True
+                img_has_correct_shape = image.shape == img_correct_shape
+                img_has_buildings = bboxs.shape[0] != 0
+                img_has_damaged_buildings = utils.assess_image_damage(
+                    im_classes
+                )  # FIXME: for now, it is a pass-through function with all True
+
+            all_conditions_met = all(
+                [img_has_correct_shape, img_has_buildings, img_has_damaged_buildings]
+            )
+            print(
+                bboxs,
+                img_has_correct_shape,
+                img_has_buildings,
+                img_has_damaged_buildings,
+            )
 
         # Reduce quality and process image
         image = utils.process_image(image, resizing_size=image_size)
@@ -151,7 +166,7 @@ def create_datasets(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
             inp=[i],
-            Tout=[tf.uint8, tf.uint16, tf.float32],  # image, classes, bbox
+            Tout=[tf.uint8, tf.uint16, tf.float64],  # image, classes, bbox
         ),
     )
     train_dataset = train_dataset.map(
@@ -178,7 +193,7 @@ def create_datasets(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
             inp=[i],
-            Tout=[tf.uint8, tf.uint16, tf.float32],  # image, classes, bbox
+            Tout=[tf.uint8, tf.uint16, tf.float64],  # image, classes, bbox
         ),
     )
     val_dataset = val_dataset.map(
@@ -194,44 +209,66 @@ def create_datasets(
 
     if save_examples == True:
         print("saving train/test examples")
+        visualize_dataset(savename, train_dataset, (0, 255), 3, 3)
 
-        i = 0
-        for x in train_dataset.take(2):
-            print(f"batch {i}")
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
-            )
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
-                tfds.as_numpy(x)[1]["classes"],
-            )
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
-                tfds.as_numpy(x)[1]["boxes"],
-            )
-            i += 1
+        visualize_dataset(savename, val_dataset, (0, 255), 3, 3)
+        # i = 0
+        # for x in train_dataset.take(2):
+        #     print(f"batch {i}")
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
+        #     )
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
+        #         tfds.as_numpy(x)[1]["classes"],
+        #     )
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
+        #         tfds.as_numpy(x)[1]["boxes"],
+        #     )
+        #     i += 1
 
-        i = 0
-        for x in val_dataset.take(2):
-            print(f"batch {i}")
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
-            )
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
-                tfds.as_numpy(x)[1]["classes"],
-            )
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
-                tfds.as_numpy(x)[1]["boxes"],
-            )
+        # i = 0
+        # for x in val_dataset.take(2):
+        #     print(f"batch {i}")
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
+        #     )
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
+        #         tfds.as_numpy(x)[1]["classes"],
+        #     )
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
+        #         tfds.as_numpy(x)[1]["boxes"],
+        #     )
 
-            i += 1
+        #     i += 1
 
     print()
     print("Dataset generado!")
 
     return train_dataset, val_dataset
+
+
+def visualize_dataset(savename, inputs, value_range, rows, cols):
+    import matplotlib.pyplot as plt
+
+    inputs = next(iter(inputs.take(1)))
+    print(inputs[1])
+    images, y_true = inputs[0], inputs[1]
+    visualization.plot_bounding_box_gallery(
+        images,
+        value_range=value_range,
+        rows=rows,
+        cols=cols,
+        y_true=y_true,
+        scale=5,
+        font_scale=0.7,
+        bounding_box_format="xyxy",
+        class_mapping={0: "undamaged", 1: "damaged"},
+    )
+    plt.gcf().savefig(f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs")
 
 
 def get_callbacks(
@@ -283,9 +320,9 @@ def get_callbacks(
             for batch in self.data:
                 images, y_true = batch[0], batch[1]
                 # Check shapes of y_true and y_pred
-                print("Shapes of y_true:", tf.shape(y_true))
-                print("Shapes of y_pred boxes:", tf.shape(y_pred["boxes"]))
-                print("Shapes of y_pred classes:", tf.shape(y_pred["classes"]))
+                print("Shapes of y_true:", tf.shape(images))
+                print("Shapes of y_true boxes:", tf.shape(y_true["boxes"]))
+                print("Shapes of y_true classes:", tf.shape(y_true["classes"]))
                 y_pred = self.model.predict(images, verbose=0)
                 self.metrics.update_state(y_true, y_pred)
 
@@ -300,6 +337,10 @@ def get_callbacks(
             return logs
 
     coco_metric = EvaluateCOCOMetricsCallback(val_dataset, logdir)
+    coco_metrics_callback = keras_cv.callbacks.PyCOCOCallback(
+        val_dataset.take(20), bounding_box_format="xyxy"
+    )
+
     tensorboard_callback = TensorBoard(
         log_dir=logdir, histogram_freq=1  # , profile_batch="100,200"
     )
@@ -333,7 +374,7 @@ def get_callbacks(
     )
 
     return [
-        coco_metric,  # Mean Average Precision (mAP) metric
+        # coco_metrics_callback,  # Mean Average Precision (mAP) metric
         early_stopping_callback,
         # reduce_lr,
         model_checkpoint_callback,  # Save best model
@@ -360,8 +401,8 @@ def run_model(
     Parameters
     ----------
     model_function : Model
-        Keras model function like small_cnn()  or adapt_efficient_net().
-    lr : float
+        Keras model fun44ction like small_cnn()  or adapt_efficient_net().
+    lr : float4
         Learning rate.
     train_dataset : Iterator
         tensorflow dataset for the training data.
@@ -398,10 +439,7 @@ def run_model(
         model = model_function
         model.summary()
 
-        optimizer = tf.keras.optimizers.Adam(
-            learning_rate=0.001,
-            global_clipnorm=None,
-        )
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, global_clipnorm=10)
 
         model.compile(
             optimizer=optimizer,
@@ -520,7 +558,7 @@ def run(
 if __name__ == "__main__":
 
     image_size = 512  # YOLO Default
-    train_size = 500
+    train_size = 1000
     model = "YOLOv8"
     extra = ""
     weights = None
