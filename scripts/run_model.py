@@ -46,8 +46,10 @@ from tensorflow.keras.callbacks import (
     CSVLogger,
 )
 from tensorflow.keras.models import Sequential
-import cv2
-import skimage
+
+import keras_cv
+from keras_cv import bounding_box
+from keras_cv import visualization
 
 pd.set_option("display.max_columns", None)
 
@@ -62,7 +64,9 @@ except:
 PR_DS_POST = xr.open_dataset(rf"{REPO}/data/data_in/Post_Event_San_Juan.tif")
 PR_DS_PRE = xr.open_dataset(rf"{REPO}/data/data_in/Pre_Event_San_Juan.tif")
 
-BUILDING_GDF = gpd.read_parquet(rf"{REPO}/data/data_out/BUILDING_GDF.parquet")
+BUILDING_GDF = gpd.read_parquet(
+    rf"{REPO}/data/data_out/building_footprint_roi_challenge_label_reproj.parquet"
+)
 
 PR_DS_POST_POLYGON = utils.get_dataset_extent(PR_DS_POST)
 PR_DS_PRE_POLYGON = utils.get_dataset_extent(PR_DS_PRE)
@@ -93,8 +97,14 @@ def create_datasets(
         image = np.zeros(shape=(3, 0, 0))
         img_correct_shape = (3, image_size, image_size)
 
+        all_conditions_met = False
         # Iterate until the image has the correct shape (when selecting borders)
-        while (image.shape != img_correct_shape) or (bboxs.shape[0] == 0):
+        while all_conditions_met is False:  # or (has_damage is False):
+
+            # Reset conditions
+            img_has_correct_shape = False
+            img_has_buildings = False
+            img_has_damaged_buildings = False
 
             # Generate the image
             image, boundaries = utils.stacked_image_from_census_tract(
@@ -104,12 +114,21 @@ def create_datasets(
                 n_bands=3,
                 stacked_images=[1],
             )
-
             if boundaries is not None:
                 # FIXME: armar estas funciones
                 im_classes, bboxs = utils.get_image_classes_and_boxes(
-                    BUILDING_GDF, boundaries
+                    BUILDING_GDF, boundaries, image_size
                 )
+
+                img_has_correct_shape = image.shape == img_correct_shape
+                img_has_buildings = bboxs.shape[0] != 0
+                img_has_damaged_buildings = utils.assess_image_damage(
+                    im_classes
+                )  # FIXME: for now, it is a pass-through function with all True
+
+            all_conditions_met = all(
+                [img_has_correct_shape, img_has_buildings, img_has_damaged_buildings]
+            )
 
         # Reduce quality and process image
         image = utils.process_image(image, resizing_size=image_size)
@@ -127,7 +146,7 @@ def create_datasets(
 
     ### Generate Datasets
     # Split the data
-    val_size = int(train_size * 0.1)
+    val_size = int(train_size)  # * 0.1)
     print()
     print(f"Train size: {train_size} images")
     print(f"Validation size: {val_size} images")
@@ -143,7 +162,7 @@ def create_datasets(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
             inp=[i],
-            Tout=[tf.uint8, tf.uint16, tf.float32],  # image, classes, bbox
+            Tout=[tf.uint8, tf.uint16, tf.float64],  # image, classes, bbox
         ),
     )
     train_dataset = train_dataset.map(
@@ -170,48 +189,57 @@ def create_datasets(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
             inp=[i],
-            Tout=[tf.uint8, tf.uint16, tf.float32],  # image, classes, bbox
+            Tout=[tf.uint8, tf.uint16, tf.float64],  # image, classes, bbox
         ),
     )
-    val_dataset = val_dataset.map(pack_features_vector)
+    val_dataset = val_dataset.map(
+        lambda image, classes, bbox: (
+            tf.ensure_shape(image, (image_size, image_size, 3)),
+            tf.ensure_shape(classes, [None]),  # Modify the shape according to your data
+            tf.ensure_shape(bbox, [None, 4]),  # Modify the shape according to your data
+        )
+    )
 
-    val_dataset = val_dataset.ragged_batch(64, drop_remainder=True)
+    val_dataset = val_dataset.map(pack_features_vector)
+    val_dataset = val_dataset.ragged_batch(8, drop_remainder=True)
 
     if save_examples == True:
         print("saving train/test examples")
+        visualize_dataset(f"{savename}_train_", train_dataset, (0, 255), 2, 2)
 
-        i = 0
-        for x in train_dataset.take(2):
-            print(f"batch {i}")
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
-            )
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
-                tfds.as_numpy(x)[1]["classes"],
-            )
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
-                tfds.as_numpy(x)[1]["boxes"],
-            )
-            i += 1
+        visualize_dataset(f"{savename}_val_", val_dataset, (0, 255), 2, 2)
+        # i = 0
+        # for x in train_dataset.take(2):
+        #     print(f"batch {i}")
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
+        #     )
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
+        #         tfds.as_numpy(x)[1]["classes"],
+        #     )
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
+        #         tfds.as_numpy(x)[1]["boxes"],
+        #     )
+        #     i += 1
 
-        i = 0
-        for x in val_dataset.take(2):
-            print(f"batch {i}")
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
-            )
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
-                tfds.as_numpy(x)[1]["classes"],
-            )
-            np.save(
-                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
-                tfds.as_numpy(x)[1]["boxes"],
-            )
+        # i = 0
+        # for x in val_dataset.take(2):
+        #     print(f"batch {i}")
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
+        #     )
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
+        #         tfds.as_numpy(x)[1]["classes"],
+        #     )
+        #     np.save(
+        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
+        #         tfds.as_numpy(x)[1]["boxes"],
+        #     )
 
-            i += 1
+        #     i += 1
 
     print()
     print("Dataset generado!")
@@ -219,8 +247,31 @@ def create_datasets(
     return train_dataset, val_dataset
 
 
+def visualize_dataset(savename, inputs, value_range, rows, cols):
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+
+    inputs = next(iter(inputs.take(1)))
+
+    images, y_true = inputs[0], inputs[1]
+    print(y_true)
+    visualization.plot_bounding_box_gallery(
+        images,
+        value_range=value_range,
+        rows=rows,
+        cols=cols,
+        y_true=y_true,
+        scale=5,
+        font_scale=0.2,
+        bounding_box_format="xyxy",
+        class_mapping={0: "", 1: "damaged"},
+    )
+    plt.gcf().savefig(f"{PATH_OUTPUTS}/{savename}_example_imgs")
+
+
 def get_callbacks(
     savename,
+    val_dataset,
     logdir=None,
 ) -> List[Union[TensorBoard, EarlyStopping, ModelCheckpoint]]:
     """Accepts the model name as a string and returns multiple callbacks for training the keras model.
@@ -236,9 +287,9 @@ def get_callbacks(
         A list of multiple keras callbacks.
     """
 
-    class CustomLossCallback(tf.keras.callbacks.Callback):
+    class CheckpointModel(tf.keras.callbacks.Callback):
         def __init__(self, log_dir):
-            super(CustomLossCallback, self).__init__()
+            super(CheckpointModel, self).__init__()
             self.log_dir = log_dir
 
         def on_epoch_end(self, epoch, logs=None):
@@ -250,16 +301,54 @@ def get_callbacks(
                     include_optimizer=True,
                 )
 
+    class EvaluateCOCOMetricsCallback(keras.callbacks.Callback):
+        def __init__(self, data, logdir):
+            super().__init__()
+            self.data = data
+            self.metrics = keras_cv.metrics.BoxCOCOMetrics(
+                bounding_box_format="xyxy",
+                evaluate_freq=1e9,
+            )
+
+            self.save_path = logdir
+            self.best_map = -1.0
+
+        def on_epoch_end(self, epoch, logs):
+            self.metrics.reset_state()
+            for batch in self.data:
+                images, y_true = batch[0], batch[1]
+                # Check shapes of y_true and y_pred
+                print("Shapes of y_true:", tf.shape(images))
+                print("Shapes of y_true boxes:", tf.shape(y_true["boxes"]))
+                print("Shapes of y_true classes:", tf.shape(y_true["classes"]))
+                y_pred = self.model.predict(images, verbose=0)
+                self.metrics.update_state(y_true, y_pred)
+
+            metrics = self.metrics.result(force=True)
+            logs.update(metrics)
+
+            current_map = metrics["MaP"]
+            if current_map > self.best_map:
+                self.best_map = current_map
+                self.model.save(self.save_path)  # Save the model when mAP improves
+
+            return logs
+
+    coco_metric = EvaluateCOCOMetricsCallback(val_dataset, logdir)
+    coco_metrics_callback = keras_cv.callbacks.PyCOCOCallback(
+        val_dataset.take(20), bounding_box_format="xyxy"
+    )
+
     tensorboard_callback = TensorBoard(
         log_dir=logdir, histogram_freq=1  # , profile_batch="100,200"
     )
     # use tensorboard --logdir logs/scalars in your command line to startup tensorboard with the correct logs
 
     # Create an instance of your custom callback
-    custom_loss_callback = CustomLossCallback(log_dir=logdir)
+    checkpoint_model = CheckpointModel(log_dir=logdir)
 
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss",
+        monitor="class_loss",
         min_delta=0,  # the training is terminated as soon as the performance measure gets worse from one epoch to the next
         start_from_epoch=50,
         patience=50,  # amount of epochs with no improvements until the model stops
@@ -283,12 +372,13 @@ def get_callbacks(
     )
 
     return [
-        tensorboard_callback,
-        # reduce_lr,
+        # coco_metrics_callback,  # Mean Average Precision (mAP) metric
         early_stopping_callback,
-        model_checkpoint_callback,
-        csv_logger,
-        custom_loss_callback,
+        # reduce_lr,
+        model_checkpoint_callback,  # Save best model
+        checkpoint_model,  # Save model every 10 epochs
+        csv_logger,  # Save history in csv
+        tensorboard_callback,  # Save history in tensorboard
     ]
 
 
@@ -309,8 +399,8 @@ def run_model(
     Parameters
     ----------
     model_function : Model
-        Keras model function like small_cnn()  or adapt_efficient_net().
-    lr : float
+        Keras model fun44ction like small_cnn()  or adapt_efficient_net().
+    lr : float4
         Learning rate.
     train_dataset : Iterator
         tensorflow dataset for the training data.
@@ -347,10 +437,7 @@ def run_model(
         model = model_function
         model.summary()
 
-        optimizer = tf.keras.optimizers.Adam(
-            learning_rate=0.001,
-            global_clipnorm=None,
-        )
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, global_clipnorm=10)
 
         model.compile(
             optimizer=optimizer,
@@ -361,17 +448,10 @@ def run_model(
 
     else:
         print("Restoring model...")
-        try:
-            model_path = (
-                f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{initial_epoch}"
-            )
-            model = keras.models.load_model(model_path)  # load the model from file
-        except:
-            initial_epoch -= 1
-            model_path = (
-                f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{initial_epoch}"
-            )
-            model = keras.models.load_model(model_path)  # load the model from file
+        model_path = (
+            f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{initial_epoch}"
+        )
+        model = keras.models.load_model(model_path)  # load the model from file
         initial_epoch = initial_epoch + 1
 
     history = model.fit(
@@ -446,13 +526,14 @@ def run(
         image_size,
         train_size=train_size,
         savename=savename,
-        save_examples=False,
+        save_examples=True,
     )
 
     # Get tensorboard callbacks and set the custom test loss computation
     #   at the end of each epoch
     callbacks = get_callbacks(
         savename=savename,
+        val_dataset=val_dataset,
         logdir=log_dir,
     )
 
@@ -475,7 +556,7 @@ def run(
 if __name__ == "__main__":
 
     image_size = 512  # YOLO Default
-    train_size = 10_000
+    train_size = 1000
     model = "YOLOv8"
     extra = ""
     weights = None
