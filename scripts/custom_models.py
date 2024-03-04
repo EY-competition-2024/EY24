@@ -55,7 +55,7 @@ def YOLOv8(n_classes=2) -> Sequential:
     model = keras_cv.models.YOLOV8Detector(
         num_classes=n_classes,
         bounding_box_format="xyxy",
-        backbone=keras_cv.models.YOLOV8Backbone.from_preset("yolo_v8_s_backbone_coco"),
+        backbone=keras_cv.models.YOLOV8Backbone.from_preset("yolo_v8_xs_backbone_coco"),
         fpn_depth=1,
     )
 

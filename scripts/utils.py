@@ -58,10 +58,12 @@ def get_image_classes_and_boxes(gdf, boundaries, img_size):
         / (np.array([xmax, ymax, xmax, ymax]) - np.array([xmin, ymin, xmin, ymin]))
         * img_size
     )
+    # Correct vertical mirroring
+    bboxs[:, 1] = img_size - bboxs[:, 1]
+    bboxs[:, 3] = img_size - bboxs[:, 3]
 
-    # FIXME: cambiar esto por la columna de BUILDING_GDF con la clase correspondiente
-    # classes = image_buildings.classes.to_numpy()
-    classes = np.random.randint(0, 2, size=len(bboxs))
+    # Get classes
+    classes = gdf.damaged.to_numpy()
 
     return classes, bboxs
 
@@ -70,10 +72,10 @@ def assess_image_damage(im_classes):
 
     has_damage = any(im_classes == 1)
 
-    if np.random.rand() > 0.9:
-        has_damage = True
+    # if np.random.rand() > 0.9:
+    #     has_damage = True
 
-    return True
+    return has_damage
 
 
 def random_point_from_geometry(polygon, size=100):

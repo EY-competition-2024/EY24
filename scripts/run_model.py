@@ -64,7 +64,9 @@ except:
 PR_DS_POST = xr.open_dataset(rf"{REPO}/data/data_in/Post_Event_San_Juan.tif")
 PR_DS_PRE = xr.open_dataset(rf"{REPO}/data/data_in/Pre_Event_San_Juan.tif")
 
-BUILDING_GDF = gpd.read_parquet(rf"{REPO}/data/data_out/BUILDING_GDF.parquet")
+BUILDING_GDF = gpd.read_parquet(
+    rf"{REPO}/data/data_out/building_footprint_roi_challenge_label_reproj.parquet"
+)
 
 PR_DS_POST_POLYGON = utils.get_dataset_extent(PR_DS_POST)
 PR_DS_PRE_POLYGON = utils.get_dataset_extent(PR_DS_PRE)
@@ -126,12 +128,6 @@ def create_datasets(
 
             all_conditions_met = all(
                 [img_has_correct_shape, img_has_buildings, img_has_damaged_buildings]
-            )
-            print(
-                bboxs,
-                img_has_correct_shape,
-                img_has_buildings,
-                img_has_damaged_buildings,
             )
 
         # Reduce quality and process image
@@ -209,9 +205,9 @@ def create_datasets(
 
     if save_examples == True:
         print("saving train/test examples")
-        visualize_dataset(savename, train_dataset, (0, 255), 3, 3)
+        visualize_dataset(f"{savename}_train_", train_dataset, (0, 255), 2, 2)
 
-        visualize_dataset(savename, val_dataset, (0, 255), 3, 3)
+        visualize_dataset(f"{savename}_val_", val_dataset, (0, 255), 2, 2)
         # i = 0
         # for x in train_dataset.take(2):
         #     print(f"batch {i}")
@@ -253,10 +249,12 @@ def create_datasets(
 
 def visualize_dataset(savename, inputs, value_range, rows, cols):
     import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
 
     inputs = next(iter(inputs.take(1)))
-    print(inputs[1])
+
     images, y_true = inputs[0], inputs[1]
+    print(y_true)
     visualization.plot_bounding_box_gallery(
         images,
         value_range=value_range,
@@ -264,11 +262,11 @@ def visualize_dataset(savename, inputs, value_range, rows, cols):
         cols=cols,
         y_true=y_true,
         scale=5,
-        font_scale=0.7,
+        font_scale=0.2,
         bounding_box_format="xyxy",
-        class_mapping={0: "undamaged", 1: "damaged"},
+        class_mapping={0: "", 1: "damaged"},
     )
-    plt.gcf().savefig(f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs")
+    plt.gcf().savefig(f"{PATH_OUTPUTS}/{savename}_example_imgs")
 
 
 def get_callbacks(
