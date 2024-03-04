@@ -39,5 +39,7 @@
 *.lnk
 *.log
 *.jpg
+*.tif
+*.hdf5
 
 !data/submission_data/*.json
