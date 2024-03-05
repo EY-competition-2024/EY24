@@ -143,7 +143,7 @@ def create_datasets(
 
         # Augment dataset
         # FIXME: revisar como aumentar
-        # image = utils.augment_image(image, bboxs)
+        image = utils.augment_image(image, bboxs)
 
         return image, im_classes, bboxs
 
@@ -568,7 +568,7 @@ def run(
 if __name__ == "__main__":
 
     image_size = 512  # YOLO Default
-    train_size = 10000
+    train_size = 20000
     model = "YOLOv8"
     extra = ""
     weights = None
