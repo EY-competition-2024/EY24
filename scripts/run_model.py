@@ -80,15 +80,16 @@ roi = relevant_area.dissolve().geometry[0]
 AREAS_TO_SAMPLE = utils.multi_polygon_to_geodataframe(roi)
 
 
-def generate_savename(model_name, image_size, sample_size, extra):
+def generate_savename(model_name, sample_size, variable, extra):
 
-    savename = f"{model_name}_size{image_size}_sample{sample_size}{extra}"
+    savename = f"{model_name}_sample{sample_size}_{variable}{extra}"
 
     return savename
 
 
 def create_datasets(
     image_size,
+    variable,
     train_size,
     savename="",
     save_examples=True,
@@ -127,7 +128,7 @@ def create_datasets(
             )
             if boundaries is not None:
                 im_classes, bboxs = utils.get_image_classes_and_boxes(
-                    BUILDING_GDF, boundaries, image_size
+                    BUILDING_GDF, boundaries, image_size, variable
                 )
 
                 img_has_correct_shape = image.shape == img_correct_shape
@@ -142,7 +143,6 @@ def create_datasets(
         image = utils.process_image(image, resizing_size=image_size)
 
         # Augment dataset
-        # FIXME: revisar como aumentar
         image = utils.augment_image(image, bboxs)
 
         return image, im_classes, bboxs
@@ -287,45 +287,6 @@ def get_callbacks(
                     include_optimizer=True,
                 )
 
-    class EvaluateCOCOMetricsCallback(keras.callbacks.Callback):
-        def __init__(self, data, logdir):
-            super().__init__()
-            self.data = data
-            self.metrics = keras_cv.metrics.BoxCOCOMetrics(
-                bounding_box_format="xyxy",
-                evaluate_freq=1e9,
-            )
-
-            self.save_path = logdir
-            self.best_map = -1.0
-
-        def on_epoch_end(self, epoch, logs):
-            self.metrics.reset_state()
-            for batch in self.data:
-                images, y_true = batch[0], batch[1]
-                # Check shapes of y_true and y_pred
-                print("Shapes of y_true:", tf.shape(images))
-                print("Shapes of y_true boxes:", tf.shape(y_true["boxes"]))
-                print("Shapes of y_true classes:", tf.shape(y_true["classes"]))
-                y_pred = self.model.predict(images, verbose=0)
-                self.metrics.update_state(y_true, y_pred)
-
-            print(metrics.result())
-            metrics = self.metrics.result(force=True)
-            logs.update(metrics)
-
-            current_map = metrics["MaP"]
-            if current_map > self.best_map:
-                self.best_map = current_map
-                self.model.save(self.save_path)  # Save the model when mAP improves
-
-            return logs
-
-    # coco_metric = EvaluateCOCOMetricsCallback(val_dataset, logdir)
-    coco_metrics_callback = keras_cv.callbacks.PyCOCOCallback(
-        val_dataset, bounding_box_format="xyxy"
-    )
-
     tensorboard_callback = TensorBoard(
         log_dir=logdir, histogram_freq=1  # , profile_batch="100,200"
     )
@@ -338,7 +299,7 @@ def get_callbacks(
         monitor="class_loss",
         min_delta=0,  # the training is terminated as soon as the performance measure gets worse from one epoch to the next
         start_from_epoch=50,
-        patience=50,  # amount of epochs with no improvements until the model stops
+        patience=30,  # amount of epochs with no improvements until the model stops
         verbose=2,
         mode="auto",  # the model is stopped when the quantity monitored has stopped decreasing
         restore_best_weights=True,  # restore the best model with the lowest validation error
@@ -371,12 +332,9 @@ def get_callbacks(
 
 def run_model(
     model_function: Model,
-    lr: float,
     train_dataset: Iterator,
     val_dataset: Iterator,
-    loss: str,
     epochs: int,
-    metrics: List[str],
     callbacks: List[Union[TensorBoard, EarlyStopping, ModelCheckpoint]],
     savename: str = "",
 ):
@@ -424,7 +382,7 @@ def run_model(
         model = model_function
         model.summary()
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, global_clipnorm=10)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, global_clipnorm=10)
 
         model.compile(
             optimizer=optimizer,
@@ -457,7 +415,7 @@ def set_model_and_loss_function(model_name: str, n_classes: int):
     # Diccionario de modelos
     get_model_from_name = {
         # FIXME: Agregar este modelo que no existe hoy
-        "YOLOv8": custom_models.YOLOv8(n_classes),  # kind=kind),
+        "YOLOv8": custom_models.YOLOv8(n_classes, freeze_layers=25),
     }
 
     # Validación de parámetros
@@ -486,7 +444,6 @@ def generate_predictions(savename):
 
     submit_folder = rf"{PATH_DATAIN}/Submission data"
 
-    savename = "YOLOv8_size512_sample10000"
     model = custom_models.YOLOv8(2)
     model.load_weights(rf"{PATH_DATAOUT}/models/{savename}").expect_partial()
 
@@ -503,8 +460,13 @@ def generate_predictions(savename):
 
     plot_tools.visualize_predictions(savename, images, predictions, 4, 3)
 
+    out = f"{PATH_OUTPUTS}/{savename}_unformatted_submitions.npy"
+    np.save(out, predictions)
+    print("Se creó: ", out)
+
 
 def run(
+    variable: str,
     model_name: str,
     weights=None,
     image_size=512,
@@ -520,7 +482,7 @@ def run(
         If you just want to check if the code is working, set small_sample to True, by default False
     """
 
-    savename = generate_savename(model_name, image_size, train_size, extra)
+    savename = generate_savename(model_name, train_size, variable, extra)
     log_dir = f"{PATH_LOGS}/{savename}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     ## Set Model & loss function
@@ -534,6 +496,7 @@ def run(
     print("Setting up data generators...")
     train_dataset, val_dataset = create_datasets(
         image_size,
+        variable,
         train_size=train_size,
         savename=savename,
         save_examples=True,
@@ -550,13 +513,10 @@ def run(
     # Run model
     model, history = run_model(
         model_function=model,
-        lr=0.0001 * 5,
         train_dataset=train_dataset,
         val_dataset=val_dataset,
-        loss=loss,
-        metrics=metrics,
-        callbacks=callbacks,
         epochs=n_epochs,
+        callbacks=callbacks,
         savename=savename,
     )
     print("Fin del entrenamiento. Generando predicciones...")
@@ -567,14 +527,16 @@ def run(
 
 if __name__ == "__main__":
 
-    image_size = 512  # YOLO Default
+    variable = "damaged"  # "damaged" or "destroyed"
+    image_size = 512  # submittion size
     train_size = 20000
     model = "YOLOv8"
-    extra = ""
+    extra = "_fine_tuning"
     weights = None
 
     # Train the Model
     run(
+        variable=variable,
         model_name=model,
         weights=weights,
         image_size=image_size,
