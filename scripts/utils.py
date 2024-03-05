@@ -84,6 +84,7 @@ def assess_image_damage(im_classes):
 
     return has_damage
 
+
 def multi_polygon_to_geodataframe(multi_polygon):
 
     polygons = [polygon for polygon in multi_polygon.geoms]
@@ -91,6 +92,7 @@ def multi_polygon_to_geodataframe(multi_polygon):
     # Create a GeoDataFrame
     gdf = gpd.GeoDataFrame(geometry=polygons)
     return gdf
+
 
 def random_point_from_geometry(polygon, size=100):
     """Generates a random point within the bounds of a Polygon."""
@@ -376,9 +378,13 @@ def augment_image(img, bbox):
     # Random flip
     if np.random.rand() > 0.5:
         img = np.fliplr(img)
+        # Update x-coordinates of bounding boxes
+        bbox[:, 0::2] = img.shape[1] - bbox[:, 0::2]
 
     if np.random.rand() > 0.5:
         img = np.flipud(img)
+        # Update y-coordinates of bounding boxes
+        bbox[:, 1::2] = img.shape[0] - bbox[:, 1::2]
 
     # Adjust contrast (power law transformation)
     #   see: https://web.ece.ucsb.edu/Faculty/Manjunath/courses/ece178W03/EnhancePart1.pdf
