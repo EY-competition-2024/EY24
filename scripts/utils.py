@@ -43,7 +43,7 @@ def get_datasets_for_polygon(poly, extents):
     return correct_datasets
 
 
-def get_image_classes_and_boxes(gdf, boundaries, img_size):
+def get_image_classes_and_boxes(gdf, boundaries, img_size, variable):
 
     # filter gdf based on boudnaries
     image_buildings = gdf.cx[
@@ -70,7 +70,7 @@ def get_image_classes_and_boxes(gdf, boundaries, img_size):
     bboxs[:, [1, 3]] = bboxs[:, [3, 1]]
 
     # Get classes
-    image_buildings = image_buildings.damaged.to_numpy()
+    image_buildings = image_buildings[variable].to_numpy()
 
     return image_buildings, bboxs
 
