@@ -19,6 +19,7 @@ for folder in [PATH_DATAIN, PATH_DATAOUT, PATH_SCRIPTS, PATH_LOGS, PATH_OUTPUTS]
 
 import custom_models
 import utils
+import plot_tools
 
 import os
 import sys
@@ -64,12 +65,19 @@ except:
 PR_DS_POST = xr.open_dataset(rf"{REPO}/data/data_in/Post_Event_San_Juan.tif")
 PR_DS_PRE = xr.open_dataset(rf"{REPO}/data/data_in/Pre_Event_San_Juan.tif")
 
-BUILDING_GDF = gpd.read_parquet(
-    rf"{REPO}/data/data_out/building_footprint_roi_challenge_label_reproj.parquet"
-)
-
 PR_DS_POST_POLYGON = utils.get_dataset_extent(PR_DS_POST)
 PR_DS_PRE_POLYGON = utils.get_dataset_extent(PR_DS_PRE)
+
+BUILDING_GDF = gpd.read_parquet(
+    rf"{REPO}/data/data_out/building_footprint_cropped.parquet"
+)
+
+# Transform the building footprint into a gdf with areas to sample
+labeled_data_region = BUILDING_GDF.dissolve().geometry[0]
+relevant_area = BUILDING_GDF[BUILDING_GDF.damaged == 1]
+relevant_area.geometry = relevant_area.buffer(115)  # Aprox 115mts
+roi = relevant_area.dissolve().geometry[0]
+AREAS_TO_SAMPLE = utils.multi_polygon_to_geodataframe(roi)
 
 
 def generate_savename(model_name, image_size, sample_size, extra):
@@ -106,25 +114,25 @@ def create_datasets(
             img_has_buildings = False
             img_has_damaged_buildings = False
 
+            # Sample a random area to generate the image
+            polygon = AREAS_TO_SAMPLE.sample(1).geometry.values[0]
+
             # Generate the image
             image, boundaries = utils.stacked_image_from_census_tract(
-                dataset=PR_DS_POST,  # FIXME: aca le pódría agregar un polígono de la extension de todo PR y creo que estamos, solo samplea de ahí
-                polygon=PR_DS_POST_POLYGON,  # IDEM ACA, cambiar a globales
+                dataset=PR_DS_POST,
+                polygon=polygon,
                 img_size=image_size,
                 n_bands=3,
                 stacked_images=[1],
             )
             if boundaries is not None:
-                # FIXME: armar estas funciones
                 im_classes, bboxs = utils.get_image_classes_and_boxes(
                     BUILDING_GDF, boundaries, image_size
                 )
 
                 img_has_correct_shape = image.shape == img_correct_shape
                 img_has_buildings = bboxs.shape[0] != 0
-                img_has_damaged_buildings = utils.assess_image_damage(
-                    im_classes
-                )  # FIXME: for now, it is a pass-through function with all True
+                img_has_damaged_buildings = utils.assess_image_damage(im_classes)
 
             all_conditions_met = all(
                 [img_has_correct_shape, img_has_buildings, img_has_damaged_buildings]
@@ -135,8 +143,8 @@ def create_datasets(
 
         # Augment dataset
         # FIXME: revisar como aumentar
-        # image = utils.augment_image(image)
-        # np.save(fr"/mnt/d/Maestría/Tesis/Repo/data/data_out/test_arrays/img_{i}_{df_subset.iloc[i].link}.npy", image)
+        # image = utils.augment_image(image, bboxs)
+
         return image, im_classes, bboxs
 
     # Pack the dataset into a dictionary with desired types
@@ -146,7 +154,7 @@ def create_datasets(
 
     ### Generate Datasets
     # Split the data
-    val_size = int(train_size)  # * 0.1)
+    val_size = int(train_size * 0.1)
     print()
     print(f"Train size: {train_size} images")
     print(f"Validation size: {val_size} images")
@@ -162,7 +170,7 @@ def create_datasets(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
             inp=[i],
-            Tout=[tf.uint8, tf.uint16, tf.float64],  # image, classes, bbox
+            Tout=[tf.uint8, tf.uint8, tf.float64],  # image, classes, bbox
         ),
     )
     train_dataset = train_dataset.map(
@@ -189,7 +197,7 @@ def create_datasets(
         lambda i: tf.py_function(  # The actual data generator. Passes the index to the function that will process the data.
             func=get_data,
             inp=[i],
-            Tout=[tf.uint8, tf.uint16, tf.float64],  # image, classes, bbox
+            Tout=[tf.uint8, tf.uint8, tf.float64],  # image, classes, bbox
         ),
     )
     val_dataset = val_dataset.map(
@@ -205,68 +213,46 @@ def create_datasets(
 
     if save_examples == True:
         print("saving train/test examples")
-        visualize_dataset(f"{savename}_train_", train_dataset, (0, 255), 2, 2)
 
-        visualize_dataset(f"{savename}_val_", val_dataset, (0, 255), 2, 2)
-        # i = 0
-        # for x in train_dataset.take(2):
-        #     print(f"batch {i}")
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
-        #     )
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
-        #         tfds.as_numpy(x)[1]["classes"],
-        #     )
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
-        #         tfds.as_numpy(x)[1]["boxes"],
-        #     )
-        #     i += 1
+        plot_tools.visualize_dataset(
+            f"{savename}_train_", train_dataset, (0, 255), 2, 2
+        )
+        plot_tools.visualize_dataset(f"{savename}_val_", val_dataset, (0, 255), 2, 2)
+        i = 0
+        for x in train_dataset.take(1):
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_imgs", tfds.as_numpy(x)[0]
+            )
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_classes",
+                tfds.as_numpy(x)[1]["classes"],
+            )
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_train_example_{i}_bbox",
+                tfds.as_numpy(x)[1]["boxes"],
+            )
+            i += 1
 
-        # i = 0
-        # for x in val_dataset.take(2):
-        #     print(f"batch {i}")
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
-        #     )
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
-        #         tfds.as_numpy(x)[1]["classes"],
-        #     )
-        #     np.save(
-        #         f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
-        #         tfds.as_numpy(x)[1]["boxes"],
-        #     )
+        i = 0
+        for x in val_dataset.take(1):
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_imgs", tfds.as_numpy(x)[0]
+            )
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_classes",
+                tfds.as_numpy(x)[1]["classes"],
+            )
+            np.save(
+                f"{PATH_OUTPUTS}/{savename}_val_example_{i}_bbox",
+                tfds.as_numpy(x)[1]["boxes"],
+            )
 
-        #     i += 1
+            i += 1
 
     print()
     print("Dataset generado!")
 
     return train_dataset, val_dataset
-
-
-def visualize_dataset(savename, inputs, value_range, rows, cols):
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-
-    inputs = next(iter(inputs.take(1)))
-
-    images, y_true = inputs[0], inputs[1]
-    print(y_true)
-    visualization.plot_bounding_box_gallery(
-        images,
-        value_range=value_range,
-        rows=rows,
-        cols=cols,
-        y_true=y_true,
-        scale=5,
-        font_scale=0.2,
-        bounding_box_format="xyxy",
-        class_mapping={0: "", 1: "damaged"},
-    )
-    plt.gcf().savefig(f"{PATH_OUTPUTS}/{savename}_example_imgs")
 
 
 def get_callbacks(
@@ -324,6 +310,7 @@ def get_callbacks(
                 y_pred = self.model.predict(images, verbose=0)
                 self.metrics.update_state(y_true, y_pred)
 
+            print(metrics.result())
             metrics = self.metrics.result(force=True)
             logs.update(metrics)
 
@@ -334,9 +321,9 @@ def get_callbacks(
 
             return logs
 
-    coco_metric = EvaluateCOCOMetricsCallback(val_dataset, logdir)
+    # coco_metric = EvaluateCOCOMetricsCallback(val_dataset, logdir)
     coco_metrics_callback = keras_cv.callbacks.PyCOCOCallback(
-        val_dataset.take(20), bounding_box_format="xyxy"
+        val_dataset, bounding_box_format="xyxy"
     )
 
     tensorboard_callback = TensorBoard(
@@ -494,11 +481,34 @@ def set_model_and_loss_function(model_name: str, n_classes: int):
     return model, loss, metrics
 
 
+def generate_predictions(savename):
+    import cv2
+
+    submit_folder = rf"{PATH_DATAIN}/Submission data"
+
+    savename = "YOLOv8_size512_sample10000"
+    model = custom_models.YOLOv8(2)
+    model.load_weights(rf"{PATH_DATAOUT}/models/{savename}").expect_partial()
+
+    images_files = os.listdir(submit_folder)
+    images = []
+    for image_file in images_files:
+        image_path = os.path.join(submit_folder, image_file)
+        image = cv2.imread(image_path)  # Read the image
+        images += [image]
+    images = np.stack(images)
+
+    # Make prediction
+    predictions = model.predict(images)
+
+    plot_tools.visualize_predictions(savename, images, predictions, 4, 3)
+
+
 def run(
     model_name: str,
     weights=None,
     image_size=512,
-    train_size=10000,
+    train_size=1000,
     n_epochs=100,
     extra="",
 ):
@@ -549,14 +559,16 @@ def run(
         epochs=n_epochs,
         savename=savename,
     )
-    print("Fin del entrenamiento")
+    print("Fin del entrenamiento. Generando predicciones...")
+
+    generate_predictions(savename)
     # raise SystemExit
 
 
 if __name__ == "__main__":
 
     image_size = 512  # YOLO Default
-    train_size = 1000
+    train_size = 10000
     model = "YOLOv8"
     extra = ""
     weights = None
