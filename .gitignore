@@ -1,5 +1,3 @@
-!.gitignore
-
 *.qmd
 *.geojson
 *.xml
@@ -15,6 +13,25 @@
 *.xlsx
 *.dta
 *.gpkg
+/*
+!.gitignore
+!/scripts
+/scripts/_old
+/logs
+*.dbf
+*.cpg
+*.shp
+*.shx
+*.prj
+*.svg
+*.png
+*.pyc
+*.qgz
+*.dbf
+*.xls
+*.xlsx
+*.dta
+*.docx
 *.pdf
 *.gph
 *.csv
@@ -42,3 +59,4 @@
 *.h5
 *.tif
 *.hdf5
+
