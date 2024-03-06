@@ -1,7 +1,8 @@
 ##############      Configuración      ##############
 import os
 
-REPO = r"/mnt/d/Becas y Proyectos/EY Challenge 2024/EY24"
+# REPO = r"/mnt/d/Becas y Proyectos/EY Challenge 2024/EY24"
+REPO = r"C:/Users/Usuario/OneDrive - Royal Holloway University of London/EY Deep Learning/ey_deep_learning/EY24"
 assert os.path.isdir(
     REPO
 ), "No existe el repositorio. Revisar la variable REPO del codigo run_model"
