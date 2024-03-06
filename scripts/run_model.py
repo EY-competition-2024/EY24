@@ -68,17 +68,6 @@ PR_DS_PRE = xr.open_dataset(rf"{REPO}/data/data_in/Pre_Event_San_Juan.tif")
 PR_DS_POST_POLYGON = utils.get_dataset_extent(PR_DS_POST)
 PR_DS_PRE_POLYGON = utils.get_dataset_extent(PR_DS_PRE)
 
-BUILDING_GDF = gpd.read_parquet(
-    rf"{REPO}/data/data_out/building_footprint_cropped.parquet"
-)
-
-# Transform the building footprint into a gdf with areas to sample
-labeled_data_region = BUILDING_GDF.dissolve().geometry[0]
-relevant_area = BUILDING_GDF[BUILDING_GDF.damaged == 1]
-relevant_area.geometry = relevant_area.buffer(115)  # Aprox 115mts
-roi = relevant_area.dissolve().geometry[0]
-AREAS_TO_SAMPLE = utils.multi_polygon_to_geodataframe(roi)
-
 
 def generate_savename(model_name, sample_size, variable, extra):
 
@@ -88,6 +77,8 @@ def generate_savename(model_name, sample_size, variable, extra):
 
 
 def create_datasets(
+    AREAS_TO_SAMPLE,
+    building_gdf,
     image_size,
     variable,
     train_size,
@@ -128,7 +119,7 @@ def create_datasets(
             )
             if boundaries is not None:
                 im_classes, bboxs = utils.get_image_classes_and_boxes(
-                    BUILDING_GDF, boundaries, image_size, variable
+                    building_gdf, boundaries, image_size, variable
                 )
 
                 img_has_correct_shape = image.shape == img_correct_shape
@@ -182,7 +173,7 @@ def create_datasets(
     )
 
     train_dataset = train_dataset.map(pack_features_vector)
-    train_dataset = train_dataset.ragged_batch(8, drop_remainder=True).prefetch(
+    train_dataset = train_dataset.ragged_batch(4, drop_remainder=True).prefetch(
         tf.data.AUTOTUNE
     )
 
@@ -280,12 +271,12 @@ def get_callbacks(
 
         def on_epoch_end(self, epoch, logs=None):
             # Save model
-            if epoch % 10 == 0:
-                os.makedirs(f"{PATH_DATAOUT}/models_by_epoch/{savename}", exist_ok=True)
-                self.model.save(
-                    f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{epoch}",
-                    include_optimizer=True,
-                )
+            os.makedirs(f"{PATH_DATAOUT}/models_by_epoch/{savename}", exist_ok=True)
+            self.model.save(
+                f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{epoch}",
+                include_optimizer=True,
+            )
+            generate_predictions(savename, model=self.model, epoch=epoch)
 
     tensorboard_callback = TensorBoard(
         log_dir=logdir, histogram_freq=1  # , profile_batch="100,200"
@@ -296,7 +287,7 @@ def get_callbacks(
     checkpoint_model = CheckpointModel(log_dir=logdir)
 
     early_stopping_callback = EarlyStopping(
-        monitor="class_loss",
+        monitor="val_loss",
         min_delta=0,  # the training is terminated as soon as the performance measure gets worse from one epoch to the next
         start_from_epoch=50,
         patience=30,  # amount of epochs with no improvements until the model stops
@@ -336,6 +327,8 @@ def run_model(
     val_dataset: Iterator,
     epochs: int,
     callbacks: List[Union[TensorBoard, EarlyStopping, ModelCheckpoint]],
+    box_loss,
+    class_loss,
     savename: str = "",
 ):
     """This function runs a keras model with the Ranger optimizer and multiple callbacks. The model is evaluated within
@@ -361,6 +354,7 @@ def run_model(
     History
         The history of the keras model as a History object. To access it as a Dict, use history.history.
     """
+    import keras.backend as K
 
     def get_last_trained_epoch(savename):
         try:
@@ -382,12 +376,12 @@ def run_model(
         model = model_function
         model.summary()
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, global_clipnorm=10)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, global_clipnorm=10)
 
         model.compile(
             optimizer=optimizer,
-            classification_loss="binary_crossentropy",
-            box_loss="ciou",
+            classification_loss=class_loss,  # "focal",
+            box_loss=box_loss,  # "SmoothL1",
         )
         initial_epoch = 0
 
@@ -396,7 +390,9 @@ def run_model(
         model_path = (
             f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{initial_epoch}"
         )
-        model = keras.models.load_model(model_path)  # load the model from file
+        model = keras.models.load_model(
+            model_path,
+        )  # load the model from file
         initial_epoch = initial_epoch + 1
 
     history = model.fit(
@@ -416,6 +412,7 @@ def set_model_and_loss_function(model_name: str, n_classes: int):
     get_model_from_name = {
         # FIXME: Agregar este modelo que no existe hoy
         "YOLOv8": custom_models.YOLOv8(n_classes, freeze_layers=25),
+        "RetinaNet": custom_models.RetinaNet(n_classes, freeze_layers=3),
     }
 
     # Validación de parámetros
@@ -429,23 +426,24 @@ def set_model_and_loss_function(model_name: str, n_classes: int):
     model = get_model_from_name[model_name]
 
     # Set loss and metrics
-    # FIXME: elegir esto, ver que mierda se usa
-    loss = keras.losses.CategoricalCrossentropy()
-    metrics = [
-        keras.metrics.CategoricalAccuracy(),
-        keras.metrics.CategoricalCrossentropy(),
-    ]
+    if model_name == "YOLOv8":
+        class_loss = "binary_crossentropy"
+        box_loss = "ciou"
+    elif model_name == "RetinaNet":
+        class_loss = "focal"
+        box_loss = "SmoothL1"
 
-    return model, loss, metrics
+    return model, class_loss, box_loss
 
 
-def generate_predictions(savename):
+def generate_predictions(savename, model=None, epoch="final"):
     import cv2
 
     submit_folder = rf"{PATH_DATAIN}/Submission data"
 
-    model = custom_models.YOLOv8(2)
-    model.load_weights(rf"{PATH_DATAOUT}/models/{savename}").expect_partial()
+    if model is None:
+        model = custom_models.YOLOv8(2)
+        model.load_weights(rf"{PATH_DATAOUT}/models/{savename}").expect_partial()
 
     images_files = os.listdir(submit_folder)
     images = []
@@ -454,13 +452,15 @@ def generate_predictions(savename):
         image = cv2.imread(image_path)  # Read the image
         images += [image]
     images = np.stack(images)
+    images_ds = tf.data.Dataset.from_tensor_slices(images)
+    images_ds = images_ds.ragged_batch(4)
 
     # Make prediction
-    predictions = model.predict(images)
+    predictions = model.predict(images_ds)
 
     plot_tools.visualize_predictions(savename, images, predictions, 4, 3)
 
-    out = f"{PATH_OUTPUTS}/{savename}_unformatted_submitions.npy"
+    out = f"{PATH_OUTPUTS}/{savename}_unformatted_submitions_{epoch}.npy"
     np.save(out, predictions)
     print("Se creó: ", out)
 
@@ -486,15 +486,28 @@ def run(
     log_dir = f"{PATH_LOGS}/{savename}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     ## Set Model & loss function
-    model, loss, metrics = set_model_and_loss_function(
+    model, class_loss, box_loss = set_model_and_loss_function(
         model_name=model_name,
         n_classes=2,
     )
+
+    building_gdf = gpd.read_parquet(
+        rf"{REPO}/data/data_out/building_footprint_cropped_{variable}.parquet"
+    )
+
+    # Transform the building footprint into a gdf with areas to sample
+    labeled_data_region = building_gdf.dissolve().geometry[0]
+    relevant_area = building_gdf[building_gdf[variable] == 1]
+    relevant_area.geometry = relevant_area.buffer(115)  # Aprox 115mts
+    roi = relevant_area.dissolve().geometry[0]
+    AREAS_TO_SAMPLE = utils.multi_polygon_to_geodataframe(roi)
 
     ## Transform dataframes into datagenerators:
     #    instead of iterating over census tracts (dataframes), we will generate one (or more) images per census tract
     print("Setting up data generators...")
     train_dataset, val_dataset = create_datasets(
+        AREAS_TO_SAMPLE,
+        building_gdf,
         image_size,
         variable,
         train_size=train_size,
@@ -517,6 +530,8 @@ def run(
         val_dataset=val_dataset,
         epochs=n_epochs,
         callbacks=callbacks,
+        box_loss=box_loss,
+        class_loss=class_loss,
         savename=savename,
     )
     print("Fin del entrenamiento. Generando predicciones...")
@@ -529,9 +544,9 @@ if __name__ == "__main__":
 
     variable = "damaged"  # "damaged" or "destroyed"
     image_size = 512  # submittion size
-    train_size = 20000
-    model = "YOLOv8"
-    extra = "_fine_tuning"
+    train_size = 10000
+    model = "RetinaNet"
+    extra = "_fine_tuning_weighted"
     weights = None
 
     # Train the Model
