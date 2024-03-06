@@ -64,6 +64,18 @@ def YOLOv8(n_classes=2, freeze_layers=10) -> Sequential:
     return model
 
 
+def RetinaNet(n_classes=2, freeze_layers=10):
+    model = keras_cv.models.RetinaNet.from_preset(
+        "csp_darknet_tiny_imagenet",
+        num_classes=n_classes,
+        bounding_box_format="xyxy",
+    )
+    for layer in model.layers[:freeze_layers]:
+        layer.trainable = False
+
+    return model
+
+
 def small_cnn(resizing_size=200) -> Sequential:
     """layer normalization entre cada capa y su activación. Batch norm no funca
     porque uso batches de 1, se supone que no funciona bien para muestras de

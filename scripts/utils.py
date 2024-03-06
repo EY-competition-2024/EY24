@@ -76,7 +76,11 @@ def get_image_classes_and_boxes(gdf, boundaries, img_size, variable):
 
 
 def assess_image_damage(im_classes):
+    """Assert if any of the classes present in the image is damaged/industrial
 
+    This aims to make a similar approach that Shen et al (2016)
+    class-aware sampling (https://arxiv.org/pdf/1512.05830.pdf)
+    """
     has_damage = any(im_classes == 1)
 
     # if np.random.rand() > 0.9:
