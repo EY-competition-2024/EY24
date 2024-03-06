@@ -271,12 +271,12 @@ def get_callbacks(
 
         def on_epoch_end(self, epoch, logs=None):
             # Save model
-            if epoch % 10 == 0:
-                os.makedirs(f"{PATH_DATAOUT}/models_by_epoch/{savename}", exist_ok=True)
-                self.model.save(
-                    f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{epoch}",
-                    include_optimizer=True,
-                )
+            os.makedirs(f"{PATH_DATAOUT}/models_by_epoch/{savename}", exist_ok=True)
+            self.model.save(
+                f"{PATH_DATAOUT}/models_by_epoch/{savename}/{savename}_{epoch}",
+                include_optimizer=True,
+            )
+            generate_predictions(savename, model=self.model, epoch=epoch)
 
     tensorboard_callback = TensorBoard(
         log_dir=logdir, histogram_freq=1  # , profile_batch="100,200"
@@ -287,7 +287,7 @@ def get_callbacks(
     checkpoint_model = CheckpointModel(log_dir=logdir)
 
     early_stopping_callback = EarlyStopping(
-        monitor="class_loss",
+        monitor="val_loss",
         min_delta=0,  # the training is terminated as soon as the performance measure gets worse from one epoch to the next
         start_from_epoch=50,
         patience=30,  # amount of epochs with no improvements until the model stops
@@ -376,7 +376,7 @@ def run_model(
         model = model_function
         model.summary()
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.01, global_clipnorm=10)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, global_clipnorm=10)
 
         model.compile(
             optimizer=optimizer,
@@ -436,13 +436,14 @@ def set_model_and_loss_function(model_name: str, n_classes: int):
     return model, class_loss, box_loss
 
 
-def generate_predictions(savename):
+def generate_predictions(savename, model=None, epoch="final"):
     import cv2
 
     submit_folder = rf"{PATH_DATAIN}/Submission data"
 
-    model = custom_models.YOLOv8(2)
-    model.load_weights(rf"{PATH_DATAOUT}/models/{savename}").expect_partial()
+    if model is None:
+        model = custom_models.YOLOv8(2)
+        model.load_weights(rf"{PATH_DATAOUT}/models/{savename}").expect_partial()
 
     images_files = os.listdir(submit_folder)
     images = []
@@ -451,13 +452,15 @@ def generate_predictions(savename):
         image = cv2.imread(image_path)  # Read the image
         images += [image]
     images = np.stack(images)
+    images_ds = tf.data.Dataset.from_tensor_slices(images)
+    images_ds = images_ds.ragged_batch(4)
 
     # Make prediction
-    predictions = model.predict(images)
+    predictions = model.predict(images_ds)
 
     plot_tools.visualize_predictions(savename, images, predictions, 4, 3)
 
-    out = f"{PATH_OUTPUTS}/{savename}_unformatted_submitions.npy"
+    out = f"{PATH_OUTPUTS}/{savename}_unformatted_submitions_{epoch}.npy"
     np.save(out, predictions)
     print("Se creó: ", out)
 
@@ -541,7 +544,7 @@ if __name__ == "__main__":
 
     variable = "damaged"  # "damaged" or "destroyed"
     image_size = 512  # submittion size
-    train_size = 20000
+    train_size = 10000
     model = "RetinaNet"
     extra = "_fine_tuning_weighted"
     weights = None
