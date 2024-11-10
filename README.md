@@ -8,13 +8,10 @@ This project is focused on assessing damage caused by tropical cyclones using ma
 - [Project Overview](#project-overview)
 - [Requirements](#requirements)
 - [Directory Structure](#directory-structure)
-- [Installation](#installation)
 - [Usage](#usage)
   - [Data Preparation: `build_dataset.py`](#data-preparation-build_datasetpy)
   - [Model Execution: `run_model.py`](#model-execution-run_modelpy)
 - [Pre-trained Models](#pre-trained-models)
-- [Contributing](#contributing)
-- [License](#license)
 
 ## Project Overview
 The goal of this project is to predict building damage using satellite imagery before and after tropical cyclones. The model performs semantic segmentation to detect damaged structures, aiding in rapid assessment and response.
