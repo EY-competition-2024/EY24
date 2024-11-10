@@ -34,9 +34,11 @@ You can install the required packages using:
 
 ```bash
 pip install -r requirements.txt
+```
 
 ## Directory Structure
 
+```bash
 EY24-main/
 ├── data/
 │   └── submission_data/          # Input data for predictions
