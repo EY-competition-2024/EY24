@@ -1,5 +1,7 @@
 # EY24 Competition - Tropical Cyclone Damage Assessment
 
+![image](https://github.com/user-attachments/assets/11fd79d4-efc1-41f8-936e-f3ccb5107142)
+
 (Collaboration with Nicolás Abbate. The implementation was based on his master's thesis and paper.)
 
 This project is focused on assessing damage caused by tropical cyclones using machine learning models, specifically for building segmentation tasks. The implementation is based on the work from Nicolás Abbate's master’s thesis, which provides the foundation for the pre-trained models and approach used in this repository.
