@@ -4,7 +4,7 @@
 
 (Collaboration with Nicolás Abbate. The implementation was based on his master's thesis and paper.)
 
-This project is focused on assessing damage caused by tropical cyclones using machine learning models, specifically for building segmentation tasks. The implementation is based on the work from Nicolás Abbate's master’s thesis, which provides the foundation for the pre-trained models and approach used in this repository.
+This project is focused on assessing damage caused by tropical cyclones using deep learning. The implementation is based on the work from Nicolás Abbate's master’s thesis, which provides the foundation for the pre-trained models and approach used in this repository.
 
 ## Table of Contents
 - [Project Overview](#project-overview)
